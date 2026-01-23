@@ -1,0 +1,157 @@
+from typing import Dict, Any, List
+import json
+import re
+
+from ..BaseAgent import BaseAgent
+from models.Base import BaseModel
+from constants.verboseType import *
+
+class BoundaryValueAgent(BaseAgent):
+    """
+    边界值测试智能体，专精输入参数边界值测试用例生成
+    """
+    def __init__(
+        self,
+        model: BaseModel,
+        verbose: int = 1,
+        enabled: bool = True,
+    ):
+        """
+        初始化边界值测试智能体
+        
+        Args:
+            model: 模型实例
+            verbose: 输出详细程度
+            enabled: 是否启用该智能体
+        """
+        super().__init__(
+            model=model,
+            verbose=verbose,
+            enabled=enabled,
+            agent_name="边界值测试智能体",
+            prompt_module_path="testing.boundary_value"
+        )
+    
+    def _generate_prompt(self, problem_description: str, language: str = "Python", function_signature: str = None, function_name: str = None, sample_io: List[str] = None) -> List[Dict[str, str]]:
+        """
+        生成边界值测试用例的提示
+        
+        Args:
+            problem_description: 问题描述
+            language: 编程语言
+            function_signature: 函数签名（可选）
+            function_name: 函数名称（可选）
+            sample_io: 样例输入输出（可选）
+            
+        Returns:
+            消息列表
+        """
+        return self.prompt_module.get_messages(problem_description, language, function_signature, function_name, sample_io)
+    
+    def _process_response(self, response: str) -> Dict[str, Any]:
+        """
+        处理模型响应，提取边界值测试用例
+        
+        Args:
+            response: 模型响应文本
+            
+        Returns:
+            处理后的边界值测试用例
+        """
+        # 尝试从响应中提取JSON格式的结果
+        json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+        
+        if json_match:
+            try:
+                json_str = json_match.group(1)
+                result = json.loads(json_str)
+                
+                # 验证并修复测试用例中可能的错误
+                if "test_cases" in result:
+                    for i, test_case in enumerate(result["test_cases"]):
+                        if "assertion" in test_case:
+                            # 修复常见的断言语法错误
+                            assertion = test_case["assertion"]
+                            # 修复双点错误，如 [1..0] -> [1.0]
+                            assertion = re.sub(r'(\d)\.\.(\d)', r'\1.\2', assertion)
+                            # 修复缺少空格的比较操作符
+                            assertion = re.sub(r'([^=])=([^=])', r'\1 = \2', assertion)
+                            assertion = re.sub(r'([^!<>])=\s*=([^=])', r'\1 == \2', assertion)
+                            # 更新修复后的断言
+                            result["test_cases"][i]["assertion"] = assertion
+                
+                return {
+                    "type": "boundary_value",
+                    "analysis": response,
+                    "structured_data": result,
+                    "parameter_analysis": result.get("parameter_analysis", []),
+                    "boundary_values": result.get("boundary_values", []),
+                    "test_cases": result.get("test_cases", [])
+                }
+            except json.JSONDecodeError as e:
+                # JSON解析失败，记录错误并回退到传统提取方法
+                if self.verbose >= VERBOSE_MINIMAL:
+                    print(f"JSON解析失败: {e}")
+                    print(f"尝试使用传统方法提取测试用例")
+        
+        # 如果没有找到JSON或解析失败，尝试传统方法提取
+        # 提取测试用例（断言形式）
+        test_cases = []
+        
+        # 尝试提取代码块中的断言
+        code_blocks = re.findall(r'```(?:\w+)?\n(.*?)\n```', response, re.DOTALL)
+        for block in code_blocks:
+            assertions = [line.strip() for line in block.split('\n') if line.strip().startswith('assert') or 'assert' in line.strip()]
+            test_cases.extend(assertions)
+        
+        # 如果代码块中没有找到断言，尝试从文本中直接提取
+        if not test_cases:
+            lines = response.split('\n')
+            for line in lines:
+                if line.strip().startswith('assert') or 'assert' in line.strip():
+                    test_cases.append(line.strip())
+        
+        # 提取参数分析
+        param_analysis_match = re.search(r'(?:参数分析|输入参数分析)(?:[：:])?\s*(.*?)(?:边界值分析|$)', response, re.DOTALL)
+        param_analysis = param_analysis_match.group(1).strip() if param_analysis_match else ""
+        
+        # 提取边界值分析
+        boundary_analysis_match = re.search(r'(?:边界值分析)(?:[：:])?\s*(.*?)(?:测试用例设计|$)', response, re.DOTALL)
+        boundary_analysis = boundary_analysis_match.group(1).strip() if boundary_analysis_match else ""
+        
+        # 提取测试用例设计
+        test_design_match = re.search(r'(?:测试用例设计)(?:[：:])?\s*(.*?)(?:测试代码|$)', response, re.DOTALL)
+        test_design = test_design_match.group(1).strip() if test_design_match else ""
+        
+        return {
+            "type": "boundary_value",
+            "analysis": response,
+            "param_analysis": param_analysis,
+            "boundary_analysis": boundary_analysis,
+            "test_design": test_design,
+            "test_cases": test_cases,
+            "structured_data": None  # 标记为未能提取结构化数据
+        }
+    
+    def generate_test_cases(self, problem_description: str, language: str = "Python", function_signature: str = None, function_name: str = None, sample_io: List[str] = None) -> Dict[str, Any]:
+        """
+        生成边界值测试用例
+        
+        Args:
+            problem_description: 问题描述
+            language: 编程语言
+            function_signature: 函数签名（可选）
+            function_name: 函数名称（可选）
+            sample_io: 样例输入输出（可选）
+            
+        Returns:
+            边界值测试用例
+        """
+        result = self.execute(
+            problem_description=problem_description, 
+            language=language,
+            function_signature=function_signature, 
+            function_name=function_name,
+            sample_io=sample_io
+        )
+        return result["result"] 

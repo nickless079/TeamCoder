@@ -1,0 +1,39 @@
+# 忽略根目录下的所有文件（但保留.env）
+/*
+!.env
+!.gitignore
+
+# 保留所有文件夹，但需要明确排除某些
+!*/
+
+# 明确忽略这些文件夹
+results/
+loop_logs/
+analysis/
+
+# Python缓存文件（所有层级）
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/*.so
+
+# 环境和虚拟环境
+**/env/
+**/venv/
+**/.venv/
+
+# IDE配置
+.vscode/
+.idea/
+**/*.code-workspace
+
+# 日志文件
+**/*.log
+**/nohup.out
+**/startup.log
+
+# 临时文件
+**/*.tmp
+**/*.bak
+**/*.swp
+**/*~
